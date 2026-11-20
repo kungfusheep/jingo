@@ -125,9 +125,9 @@ func (e *SliceEncoder) structInstr() {
 		// every element is one run: reserve for the whole slice, then write each at the cursor
 		e.instruction = func(v unsafe.Pointer, w *Buffer) {
 			sl := *(*sliceHeader)(v)
-			need := 2
+			need := 2 // '[' and ']'
 			for i := uintptr(0); i < uintptr(sl.Len); i++ {
-				need += 1 + r.bound(unsafe.Pointer(uintptr(sl.Data)+(i*e.offset)))
+				need += 1 + r.bound(unsafe.Pointer(uintptr(sl.Data)+(i*e.offset))) // a comma each, one spare as the first has none
 			}
 			bs := grow(w.Bytes, need)
 			n := len(bs)
@@ -142,7 +142,7 @@ func (e *SliceEncoder) structInstr() {
 				n = r.put(unsafe.Pointer(uintptr(sl.Data)+(i*e.offset)), bs, n)
 			}
 			bs[n] = ']'
-			w.Bytes = bs[:n+1]
+			w.Bytes = bs[:n+1] // keep the ']' at n
 		}
 		return
 	}
@@ -192,9 +192,9 @@ func (e *SliceEncoder) stringInstr(conv func(unsafe.Pointer, *Buffer)) {
 func (e *SliceEncoder) flatStringInstr() {
 	e.instruction = func(v unsafe.Pointer, w *Buffer) {
 		sl := *(*sliceHeader)(v)
-		need := 2
+		need := 2 // '[' and ']'
 		for i := uintptr(0); i < uintptr(sl.Len); i++ {
-			need += 3 + len(*(*string)(unsafe.Pointer(uintptr(sl.Data) + (i * e.offset))))
+			need += 3 + len(*(*string)(unsafe.Pointer(uintptr(sl.Data) + (i * e.offset)))) // quotes and a comma, one comma spare
 		}
 		bs := grow(w.Bytes, need)
 		n := len(bs)
@@ -213,7 +213,7 @@ func (e *SliceEncoder) flatStringInstr() {
 			n++
 		}
 		bs[n] = ']'
-		w.Bytes = bs[:n+1]
+		w.Bytes = bs[:n+1] // keep the ']' at n
 	}
 }
 
@@ -221,14 +221,14 @@ func (e *SliceEncoder) flatStringInstr() {
 func (e *SliceEncoder) flatPtrStringInstr() {
 	e.instruction = func(v unsafe.Pointer, w *Buffer) {
 		sl := *(*sliceHeader)(v)
-		need := 2
+		need := 2 // '[' and ']'
 		for i := uintptr(0); i < uintptr(sl.Len); i++ {
 			s := *(**string)(unsafe.Pointer(uintptr(sl.Data) + (i * e.offset)))
 			if s == nil {
-				need += 1 + len(null)
+				need += 1 + len(null) // a comma and null
 				continue
 			}
-			need += 3 + len(*s)
+			need += 3 + len(*s) // quotes and a comma, one comma spare
 		}
 		bs := grow(w.Bytes, need)
 		n := len(bs)
@@ -252,7 +252,7 @@ func (e *SliceEncoder) flatPtrStringInstr() {
 			n++
 		}
 		bs[n] = ']'
-		w.Bytes = bs[:n+1]
+		w.Bytes = bs[:n+1] // keep the ']' at n
 	}
 }
 
@@ -324,14 +324,14 @@ func (e *SliceEncoder) ptrStrctInstr() {
 	if r := enc.flatRun(); r != nil {
 		e.instruction = func(v unsafe.Pointer, w *Buffer) {
 			sl := *(*sliceHeader)(v)
-			need := 2
+			need := 2 // '[' and ']'
 			for i := uintptr(0); i < uintptr(sl.Len); i++ {
 				s := *(*unsafe.Pointer)(unsafe.Pointer(uintptr(sl.Data) + (i * e.offset)))
 				if s == nil {
-					need += 1 + len(null)
+					need += 1 + len(null) // a comma and null
 					continue
 				}
-				need += 1 + r.bound(s)
+				need += 1 + r.bound(s) // a comma each, one spare as the first has none
 			}
 			bs := grow(w.Bytes, need)
 			n := len(bs)
@@ -351,7 +351,7 @@ func (e *SliceEncoder) ptrStrctInstr() {
 				n = r.put(s, bs, n)
 			}
 			bs[n] = ']'
-			w.Bytes = bs[:n+1]
+			w.Bytes = bs[:n+1] // keep the ']' at n
 		}
 		return
 	}

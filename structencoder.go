@@ -95,7 +95,7 @@ func (e *StructEncoder) fuseRuns() {
 		for j < len(e.instructions) && bounded(e.instructions[j].kind) {
 			j++
 		}
-		if j-i < 2 {
+		if j-i < 2 { // a lone instruction gains nothing from a run's sizing pass
 			out = append(out, e.instructions[i])
 			i++
 			continue
@@ -109,7 +109,7 @@ func (e *StructEncoder) fuseRuns() {
 			case kindStringField:
 				r.strs = append(r.strs, ins.offset)
 			case kindInt:
-				r.fixed += 20
+				r.fixed += 20 // len("-9223372036854775808"), the longest int64
 			}
 		}
 		out = append(out, instruction{kind: kindRun, run: r})
