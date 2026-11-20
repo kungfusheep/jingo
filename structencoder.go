@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 	"unsafe"
@@ -24,6 +25,7 @@ type instruction struct {
 	offset  uintptr                       // used in conjunction with leapFun
 	leapFun func(unsafe.Pointer, *Buffer) // provides a fast path for simple write & avoids wrapping function to capture offset
 	fun     func(unsafe.Pointer, *Buffer) // full instruction function for when the approaches above fail
+	run     *run                          // consecutive static, string and int instructions written with one capacity check
 }
 
 const (
@@ -31,7 +33,90 @@ const (
 	kindStringField
 	kindStatic
 	kindInt
+	kindRun
 )
+
+// run is a sequence of instructions whose output has an upper bound we can work out before writing any of it:
+// the static chunks, 20 bytes per int and the lengths of the strings. it reserves that once and writes at a
+// cursor, so the buffer's slice header isn't written back and reloaded around every append.
+type run struct {
+	fixed int           // static lengths plus 20 per int
+	strs  []uintptr     // offsets of the string fields
+	ops   []instruction // only kindStatic, kindStringField and kindInt
+}
+
+func (r *run) write(p unsafe.Pointer, w *Buffer) {
+	need := r.bound(p)
+	bs := grow(w.Bytes, need)
+	n := len(bs)
+	w.Bytes = bs[:r.put(p, bs[:n+need], n)]
+}
+
+// bound is the most bytes the run can write for the value at p.
+func (r *run) bound(p unsafe.Pointer) int {
+	need := r.fixed
+	for _, off := range r.strs {
+		need += len(*(*string)(unsafe.Pointer(uintptr(p) + off)))
+	}
+	return need
+}
+
+// put writes the run at bs[n:], which has room for bound(p) bytes, and returns the new length.
+func (r *run) put(p unsafe.Pointer, bs []byte, n int) int {
+	for i := range r.ops {
+		ins := &r.ops[i]
+		switch ins.kind {
+		case kindStatic:
+			n += copy(bs[n:], ins.static)
+		case kindStringField:
+			n += copy(bs[n:], *(*string)(unsafe.Pointer(uintptr(p) + ins.offset)))
+		default:
+			n = len(strconv.AppendInt(bs[:n], int64(*(*int)(unsafe.Pointer(uintptr(p) + ins.offset))), 10))
+		}
+	}
+	return n
+}
+
+// flatRun returns the run when it's the encoder's only instruction, so a slice of these can reserve once.
+func (e *StructEncoder) flatRun() *run {
+	if len(e.instructions) == 1 && e.instructions[0].kind == kindRun {
+		return e.instructions[0].run
+	}
+	return nil
+}
+
+// fuseRuns replaces each sequence of two or more bounded instructions with a single run.
+func (e *StructEncoder) fuseRuns() {
+	bounded := func(k int) bool { return k == kindStatic || k == kindStringField || k == kindInt }
+
+	var out []instruction
+	for i := 0; i < len(e.instructions); {
+		j := i
+		for j < len(e.instructions) && bounded(e.instructions[j].kind) {
+			j++
+		}
+		if j-i < 2 {
+			out = append(out, e.instructions[i])
+			i++
+			continue
+		}
+
+		r := &run{ops: append([]instruction(nil), e.instructions[i:j]...)}
+		for _, ins := range r.ops {
+			switch ins.kind {
+			case kindStatic:
+				r.fixed += len(ins.static)
+			case kindStringField:
+				r.strs = append(r.strs, ins.offset)
+			case kindInt:
+				r.fixed += 20
+			}
+		}
+		out = append(out, instruction{kind: kindRun, run: r})
+		i = j
+	}
+	e.instructions = out
+}
 
 // iface describes the memory footprint of interface{}
 type iface struct {
@@ -57,7 +142,10 @@ func (e *StructEncoder) Marshal(s interface{}, w *Buffer) {
 
 	for i := 0; i < len(e.instructions); i++ {
 
-		if e.instructions[i].kind == kindStatic { // static data fast path
+		if e.instructions[i].kind == kindRun { // statics, strings and ints with one capacity check
+			e.instructions[i].run.write(p, w)
+			continue
+		} else if e.instructions[i].kind == kindStatic { // static data fast path
 			w.Write(e.instructions[i].static)
 			continue
 		} else if e.instructions[i].kind == kindStringField { // string fields fast path, allows inlining of whole write
@@ -151,6 +239,7 @@ func NewStructEncoder(t interface{}) *StructEncoder {
 
 	e.chunk("}")
 	e.flunk()
+	e.fuseRuns()
 
 	return e
 }

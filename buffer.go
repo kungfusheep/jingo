@@ -36,6 +36,16 @@ func (b *Buffer) WriteByte(v byte) error {
 	return nil
 }
 
+// grow returns bs with room for n more bytes, reallocating at most once.
+func grow(bs []byte, n int) []byte {
+	if cap(bs)-len(bs) < n {
+		nb := make([]byte, len(bs), 2*cap(bs)+n)
+		copy(nb, bs)
+		bs = nb
+	}
+	return bs
+}
+
 // Reset allows this to be reused by emptying
 func (b *Buffer) Reset() {
 	b.Bytes = b.Bytes[:0]
